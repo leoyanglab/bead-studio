@@ -1,0 +1,7 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "bead-studio",
+  "compatibility_date": "2026-10-31",
+  "assets": { "directory": "./dist", "not_found_handling": "single-page-application" },
+  "routes": [{ "pattern": "beads.bool.win", "custom_domain": true }]
+}
