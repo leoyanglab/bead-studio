@@ -2,7 +2,7 @@
 
 Preact + Signals + **H3 v2** 的手串设计与定制应用，服务端 SSR、浏览器 hydration、Cloudflare Workers + D1 持久化，亦可在 Node.js + SQLite 运行。
 
-在线体验：https://beads.bool.win
+在线体验：[beads.bool.win](https://beads.bool.win)
 
 ## 已实现
 
@@ -14,6 +14,64 @@ Preact + Signals + **H3 v2** 的手串设计与定制应用，服务端 SSR、�
 - 服务端报价、定制数量、收货信息校验、订单幂等提交、买家订单列表/取消/付款说明/确认收货。
 - 商家管理：确认订单 → 待付款 → 人工核款 → 制作 → 填写物流发货 → 完成。普通用户不能访问管理接口或他人订单。
 - 390px 手机注册、结算、订单操作已验证；桌面保持三栏设计工作台。
+
+## 功能截图
+
+以下为当前版本的真实界面截图。账户、设计和订单均来自独立本地演示库；收件人、电话与地址是虚构数据，不代表真实交易。
+
+### 串珠设计工作台
+
+挑选珠材、预览配色、调整顺序与手围，实时查看材料清单和参考价格；支持导出 PNG 与分享设计。
+
+![桌面端串珠设计工作台](docs/screenshots/designer-desktop.png)
+
+<details>
+<summary>账户与云端设计：登录、保存、分享和继续编辑</summary>
+
+**登录入口**
+
+![邮箱密码登录](docs/screenshots/login.png)
+
+**我的手作空间与云端设计**
+
+![账户和云端设计列表](docs/screenshots/account-designs.png)
+
+</details>
+
+<details>
+<summary>定制下单：服务端报价、收货信息与提交订单</summary>
+
+**珠材、工费与运费明细**
+
+![定制数量与服务端报价](docs/screenshots/checkout.png)
+
+**填写配送信息并提交定制订单**
+
+![收货信息和订单提交](docs/screenshots/checkout-delivery.png)
+
+</details>
+
+<details>
+<summary>订单全流程：买家查单、商家核款、制作与发货</summary>
+
+**买家订单：查看状态、提交付款说明、取消订单或载入原设计**
+
+![买家订单列表](docs/screenshots/customer-orders.png)
+
+**商家订单工作台：确认订单、人工核款、开始制作与填写物流**
+
+![商家订单管理](docs/screenshots/merchant-orders.png)
+
+</details>
+
+### 手机端
+
+390px 视口下的设计器和订单页面；点选珠子后可用箭头排序，结算表单采用单列布局。
+
+<p>
+  <img src="docs/screenshots/designer-mobile.png" alt="手机端串珠设计器" width="320" />
+  <img src="docs/screenshots/orders-mobile.png" alt="手机端订单列表和付款说明入口" width="320" />
+</p>
 
 ## 本地运行（Node.js 22.12+，含 node:sqlite）
 
