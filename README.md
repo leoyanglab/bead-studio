@@ -133,6 +133,12 @@ node scripts/create-admin.mjs --remote
 
 `ORDERS_ENABLED=false` 可暂停接单，已存在订单仍可查询与处理。不要在日志中记录密码、Cookie 或完整收货信息。
 
+## 访问统计
+
+正式域名 `beads.bool.win` 的 SSR 页面在 `</body>` 前加载爱站统计官方异步代码，首页和设计分享页均覆盖；本地开发和其他域名不加载，避免调试访问污染统计。统计用于页面访问分析，未额外埋点提交账号、密码、收货信息或订单表单内容。
+
+统计报表在爱站后台查看；控制台弹窗切换不单独计为一次页面浏览。
+
 ## 自动部署 Hook
 
 `.github/workflows/check.yml` 负责 push / PR 的构建与完整流程测试。
