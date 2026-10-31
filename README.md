@@ -1,43 +1,101 @@
 # 珠间 · Bead Studio
 
-用 Preact + TypeScript + Signals 构建的可视化串珠设计器。奶油白与鼠尾草绿的响应式手作工作台，手机和电脑都能使用。
+Preact + Signals + **H3 v2** 的手串设计与定制应用，服务端 SSR、浏览器 hydration、Cloudflare Workers + D1 持久化，亦可在 Node.js + SQLite 运行。
 
-## 功能
+在线体验：https://beads.bool.win
 
-- 12 款示例珠材：按材质筛选、搜索、添加。
-- SVG 手串预览，拖拽排序；点选后支持键盘/移动端按钮排序、替换、删除。
-- 目标手围与估算内围、按珠材单价汇总材料清单。
-- 本地自动保存、最多 24 份收藏、导出 1200×1440 PNG。
-- 包含完整设计数据的 URL 分享链接；无需账号或服务端数据库。
-- 3 组配色灵感：苔间晨露、落日来信、海盐假日。
+## 已实现
 
-## 本地运行
+- 响应式串珠设计器：12 款珠材、筛选搜索、拖拽/按钮排序、替换删除、内围估算和材料清单。
+- 每请求独立的 Signals store，SSR 首屏直接包含内容；浏览器使用同一组件树 hydrate，之后恢复本地草稿。
+- 邮箱密码注册、登录、退出、修改密码与会话撤销。密码 PBKDF2-SHA256，随机盐；HttpOnly / SameSite Cookie，会话令牌仅以摘要入库。
+- 登录后的云端设计保存、列表、删除、公开设计链接 `/design/:id`；分享链接仅返回设计，不包含所有者或配送数据。
+- PNG 导出、浏览器本地草稿、云端设计再次编辑。
+- 服务端报价、定制数量、收货信息校验、订单幂等提交、买家订单列表/取消/付款说明/确认收货。
+- 商家管理：确认订单 → 待付款 → 人工核款 → 制作 → 填写物流发货 → 完成。普通用户不能访问管理接口或他人订单。
+- 390px 手机注册、结算、订单操作已验证；桌面保持三栏设计工作台。
 
-建议 Node.js 22.12+。
+## 本地运行（Node.js 22.12+，含 node:sqlite）
 
 ```sh
 npm ci
-npm run dev
 npm run build
+ORDERS_ENABLED=true npm start
 ```
 
-## Cloudflare
+访问 `http://127.0.0.1:5173`。Node 本地 SQLite 自动初始化于 `.data/`（Git 忽略），默认不开启接单，需设置 `ORDERS_ENABLED=true`。
 
-`wrangler.jsonc` 配置静态资源目录 `dist` 和自定义域名 `beads.bool.win`。
+## 本地 Cloudflare Workers 环境
+
+```sh
+npm ci
+npm run db:local
+npm run dev
+```
+
+## Cloudflare 部署
 
 ```sh
 npx wrangler login
+npm run db:remote
 npm run deploy
 ```
 
-自动部署可在 Cloudflare Workers Builds 连接本仓库，生产分支 `main`，构建命令 `npm run build`，部署命令 `npx wrangler deploy`，根目录 `/`。以后每次 push main 触发构建部署。GitHub Actions 只负责构建检查，避免与 Workers Builds 重复部署。
+`wrangler.jsonc` 绑定 Worker `bead-studio`、D1 数据库和域名 `beads.bool.win`。Fork 时改为自己的 D1 database_id 和域名。修改已发布表结构时新增迁移文件，不编辑已应用迁移。
 
-## 数据说明
+### 管理员
 
-珠材名称、颜色和价格均为演示数据，不是商家报价。估算内围 = 珠径总和 − 平均珠径 × π，不含绳结、松量及材料形变。实际制作应试戴确认。保存依赖当前浏览器存储；分享链接本身包含设计数据。
+普通注册永远创建 customer。首次创建独立管理员：
 
-## 技术
+```sh
+node scripts/create-admin.mjs --remote
+# 本地 Wrangler D1：不加 --remote
+```
 
-Preact / @preact/signals（signal、computed、effect、batch）/ Vite / TypeScript / Lucide / Cloudflare Workers Static Assets。
+默认邮箱 `admin@beads.bool.win`，也可用 `ADMIN_EMAIL` 指定。随机密码仅保存到 `.admin-credentials.local`（权限 600、Git 忽略），不会输出到日志。已有同邮箱时脚本失败，不覆盖密码。登录后可在账户面板修改密码。Node 本地库与 Wrangler 本地库相互独立。
 
-MIT License © 2026 leoyanglab
+## API
+
+| 接口 | 用途 |
+| --- | --- |
+| `GET /api/health` | H3 SSR 健康检查 |
+| `GET /api/catalog`, `GET /api/shop` | 珠材、参考工费、运费与接单配置 |
+| `POST /api/auth/register`, `/login`, `/logout`, `/password` | 注册、登录、退出、改密码 |
+| `GET /api/me` | 当前用户 |
+| `GET/POST /api/designs`, `GET/DELETE /api/designs/:id` | 个人设计与公开分享设计 |
+| `POST /api/quote` | 服务端报价 |
+| `GET/POST /api/orders`, `PATCH /api/orders/:id` | 买家订单 |
+| `GET /api/admin/orders`, `PATCH /api/admin/orders/:id` | 商家订单管理 |
+
+下单时客户端传递设计和数量，金额由服务端根据珠材目录重算；金额以分存储。重复 `idempotencyKey` 返回同一订单。订单变更以原状态作为数据库更新条件，避免并发覆盖。
+
+## 支付与运营范围
+
+按约定采用人工核款，没有接入支付宝、微信或银行卡自动扣款。付款说明不等于支付成功，只有管理员核对后才能进入制作流程。价格仍为示例参考价（工费每条 20 元、运费每单 10 元），需商家确认；`PAYMENT_INSTRUCTIONS` 可配置付款说明。没有自动短信、邮件通知、邮箱验证/自助找回密码、库存扣减、快递查询、退款或税务发票集成。投入实际运营前请配置真实珠材报价、商家联系方式及交易规则。
+
+`ORDERS_ENABLED=false` 可暂停接单，已存在订单仍可查询与处理。不要在日志中记录密码、Cookie 或完整收货信息。
+
+## 自动部署 Hook
+
+`.github/workflows/check.yml` 负责 push / PR 的构建与完整流程测试。
+
+`.github/deploy-hook.yml.example` 为待启用的部署工作流：构建通过后由 GitHub Actions 调用 Cloudflare Deploy Hook，任何设备推送 main 均可触发。
+
+1. 为此 Worker 连接 GitHub **仅指定** `leoyanglab/bead-studio`，配置构建命令 `npm run build`、部署命令 `npx wrangler deploy`。
+2. 在 Cloudflare Builds 创建指向 `main` 的 Deploy Hook；关闭仓库自带 push 自动构建以避免重复。
+3. 将完整 Hook 地址保存到仓库 Secret `CLOUDFLARE_DEPLOY_HOOK_URL`，不要提交地址到源码。
+4. 将 example 移动至 `.github/workflows/deploy-hook.yml` 启用，并推送 main 实测。
+
+当前 Hook 连接仍需完成 GitHub 的身份验证，不能把本地准备的工作流视为已启用部署。
+
+## 验证
+
+```sh
+npm run build
+npm test
+npx wrangler deploy --dry-run
+```
+
+测试使用内存 SQLite 和真实 H3 请求处理器，覆盖 SSR/XSS 序列化、状态隔离、鉴权/越权、服务端金额、重复下单、订单完整流转、改密码撤销旧会话、CSRF 来源检查、非法输入及关闭接单。
+
+MIT © 2026 leoyanglab

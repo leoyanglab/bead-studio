@@ -1,1 +1,30 @@
-{"name":"bead-studio","version":"1.0.0","private":true,"type":"module","scripts":{"dev":"vite --host 127.0.0.1","build":"tsc -b && vite build","preview":"vite preview --host 127.0.0.1","deploy":"npm run build && wrangler deploy"},"dependencies":{"preact":"^10.27.0","@preact/signals":"^2.3.0","lucide-preact":"^0.468.0"},"devDependencies":{"typescript":"~5.9.3","vite":"^7.1.0","@preact/preset-vite":"^2.10.2","wrangler":"^4.45.0"}}
+{
+  "name": "bead-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && wrangler dev --port 5173",
+    "build": "vite build && vite build --ssr src/server/worker.tsx && tsc --noEmit",
+    "preview": "wrangler dev --port 5173",
+    "deploy": "npm run build && wrangler deploy",
+    "start": "node scripts/node-server.mjs",
+    "db:local": "wrangler d1 migrations apply bead-studio --local",
+    "db:remote": "wrangler d1 migrations apply bead-studio --remote",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.3.0",
+    "h3": "^2.0.8",
+    "lucide-preact": "^0.468.0",
+    "preact": "^10.27.0",
+    "preact-render-to-string": "^6.8.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261031.1",
+    "@preact/preset-vite": "^2.10.2",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.0",
+    "wrangler": "^4.45.0"
+  }
+}

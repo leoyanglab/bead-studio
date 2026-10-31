@@ -1,0 +1,36 @@
+name: Build and deploy
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bead-studio-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Trigger Cloudflare Deploy Hook
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          DEPLOY_HOOK_URL: ${{ secrets.CLOUDFLARE_DEPLOY_HOOK_URL }}
+        shell: bash
+        run: |
+          if [ -z "$DEPLOY_HOOK_URL" ]; then
+            echo 'Missing CLOUDFLARE_DEPLOY_HOOK_URL repository secret.' >&2
+            exit 1
+          fi
+          curl --silent --show-error --fail --proto '=https' \
+            --connect-timeout 15 --max-time 60 \
+            --request POST "$DEPLOY_HOOK_URL" --output /dev/null
+          echo 'Cloudflare build requested. Check Workers Builds for deployment completion.'
