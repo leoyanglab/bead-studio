@@ -139,18 +139,18 @@ node scripts/create-admin.mjs --remote
 
 统计报表在爱站后台查看；控制台弹窗切换不单独计为一次页面浏览。
 
-## 自动部署 Hook
+## 自动部署与 Deploy Hook
 
-`.github/workflows/check.yml` 负责 push / PR 的构建与完整流程测试。
+Cloudflare Worker `bead-studio` 已连接 `leoyanglab/bead-studio`，生产分支为 `main`。任意设备推送 `main` 后，由 Cloudflare Git 集成自动构建并部署到 https://beads.bool.win 。
 
-`.github/deploy-hook.yml.example` 为待启用的部署工作流：构建通过后由 GitHub Actions 调用 Cloudflare Deploy Hook，任何设备推送 main 均可触发。
+- 构建命令：`npm run build && npm test`，构建与完整流程测试均通过后才能部署。
+- 部署命令：`npx wrangler deploy`。
+- GitHub Actions 的 `.github/workflows/check.yml` 继续负责 push / PR 的独立校验。
+- Cloudflare Deploy Hook `github-main-push` 指向 `main`，通过 POST 可独立触发同一构建部署流程。
 
-1. 为此 Worker 连接 GitHub **仅指定** `leoyanglab/bead-studio`，配置构建命令 `npm run build`、部署命令 `npx wrangler deploy`。
-2. 在 Cloudflare Builds 创建指向 `main` 的 Deploy Hook；关闭仓库自带 push 自动构建以避免重复。
-3. 将完整 Hook 地址保存到仓库 Secret `CLOUDFLARE_DEPLOY_HOOK_URL`，不要提交地址到源码。
-4. 将 example 移动至 `.github/workflows/deploy-hook.yml` 启用，并推送 main 实测。
+Hook 地址包含触发凭据，只在 Cloudflare Worker「设置 → 构建 → 部署挂钩」中查看，不提交到源码。当前方案无需向 GitHub 保存 Cloudflare API 令牌或 Hook Secret。`.github/deploy-hook.yml.example` 作为可选工作流模板保留，未启用，避免重复触发部署。
 
-当前 Hook 连接仍需完成 GitHub 的身份验证，不能把本地准备的工作流视为已启用部署。
+现有 D1 数据库绑定随 `wrangler.jsonc` 部署；此流程不自动执行数据库迁移。新增数据库迁移时，应先审查并执行 `npm run db:remote`，再发布依赖该结构的代码。
 
 ## 验证
 
