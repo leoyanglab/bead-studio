@@ -114,16 +114,16 @@ node scripts/create-admin.mjs --remote
 
 ## API
 
-| 接口 | 用途 |
-| --- | --- |
-| `GET /api/health` | H3 SSR 健康检查 |
-| `GET /api/catalog`, `GET /api/shop` | 珠材、参考工费、运费与接单配置 |
-| `POST /api/auth/register`, `/login`, `/logout`, `/password` | 注册、登录、退出、改密码 |
-| `GET /api/me` | 当前用户 |
-| `GET/POST /api/designs`, `GET/DELETE /api/designs/:id` | 个人设计与公开分享设计 |
-| `POST /api/quote` | 服务端报价 |
-| `GET/POST /api/orders`, `PATCH /api/orders/:id` | 买家订单 |
-| `GET /api/admin/orders`, `PATCH /api/admin/orders/:id` | 商家订单管理 |
+| 接口                                                        | 用途                           |
+| ----------------------------------------------------------- | ------------------------------ |
+| `GET /api/health`                                           | H3 SSR 健康检查                |
+| `GET /api/catalog`, `GET /api/shop`                         | 珠材、参考工费、运费与接单配置 |
+| `POST /api/auth/register`, `/login`, `/logout`, `/password` | 注册、登录、退出、改密码       |
+| `GET /api/me`                                               | 当前用户                       |
+| `GET/POST /api/designs`, `GET/DELETE /api/designs/:id`      | 个人设计与公开分享设计         |
+| `POST /api/quote`                                           | 服务端报价                     |
+| `GET/POST /api/orders`, `PATCH /api/orders/:id`             | 买家订单                       |
+| `GET /api/admin/orders`, `PATCH /api/admin/orders/:id`      | 商家订单管理                   |
 
 下单时客户端传递设计和数量，金额由服务端根据珠材目录重算；金额以分存储。重复 `idempotencyKey` 返回同一订单。订单变更以原状态作为数据库更新条件，避免并发覆盖。
 
@@ -163,3 +163,7 @@ npx wrangler deploy --dry-run
 测试使用内存 SQLite 和真实 H3 请求处理器，覆盖 SSR/XSS 序列化、状态隔离、鉴权/越权、服务端金额、重复下单、订单完整流转、改密码撤销旧会话、CSRF 来源检查、非法输入及关闭接单。
 
 MIT © 2026 leoyanglab
+
+## 代码阅读与维护
+
+[代码结构与阅读顺序](docs/architecture.md) 说明入口、模块职责和状态边界。统一格式：`npm run format`；检查格式：`npm run format:check`。

@@ -5,13 +5,13 @@
   "assets": {
     "directory": "./dist/client",
     "binding": "ASSETS",
-    "run_worker_first": true
+    "run_worker_first": true,
   },
   "routes": [
     {
       "pattern": "beads.bool.win",
-      "custom_domain": true
-    }
+      "custom_domain": true,
+    },
   ],
   "main": "dist/server/worker.js",
   "d1_databases": [
@@ -19,11 +19,11 @@
       "binding": "DB",
       "database_name": "bead-studio",
       "database_id": "bab23b47-6137-4192-b157-ae45de5256aa",
-      "migrations_dir": "migrations"
-    }
+      "migrations_dir": "migrations",
+    },
   ],
   "vars": {
     "ORDERS_ENABLED": "true",
-    "PAYMENT_INSTRUCTIONS": "请等待商家确认材料、价格和交期，取得商家收款信息后再付款。付款后填写实际付款时间与金额，由商家核对确认。"
-  }
+    "PAYMENT_INSTRUCTIONS": "请等待商家确认材料、价格和交期，取得商家收款信息后再付款。付款后填写实际付款时间与金额，由商家核对确认。",
+  },
 }

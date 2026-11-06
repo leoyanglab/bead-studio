@@ -1,10 +1,75 @@
-import type { D1Database } from '@cloudflare/workers-types';
-export const hex=(buffer:ArrayBuffer)=>Array.from(new Uint8Array(buffer),n=>n.toString(16).padStart(2,'0')).join('');
-export const digest=async(s:string)=>hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)));
-export const random=()=>hex(crypto.getRandomValues(new Uint8Array(32)).buffer);
-const iterations=100000;
-async function derive(password:string,salt:string){const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);return hex(await crypto.subtle.deriveBits({name:'PBKDF2',salt:new TextEncoder().encode(salt),iterations,hash:'SHA-256'},key,256));}
-export async function hashPassword(password:string){const salt=random();return `pbkdf2:${iterations}:${salt}:${await derive(password,salt)}`;}
-export async function verifyPassword(password:string,stored:string){const parts=stored.split(':');if(parts[0]!=='pbkdf2'||parts[1]!==String(iterations))return false;const actual=await derive(password,parts[2]);let diff=actual.length^parts[3].length;for(let i=0;i<actual.length;i++)diff|=actual.charCodeAt(i)^parts[3].charCodeAt(i);return diff===0;}
-export async function sessionUser(db:D1Database,request:Request){const token=request.headers.get('Cookie')?.match(/(?:^|;\s*)bead_session=([a-f0-9]{64})(?:;|$)/)?.[1];if(!token)return null;return db.prepare('SELECT u.id,u.email,u.name,u.role FROM users u JOIN sessions s ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?').bind(await digest(token),Date.now()).first<{id:string;email:string;name:string;role:'admin'|'customer'}>();}
-export async function newSession(db:D1Database,userId:string,request:Request){const token=random();await db.prepare('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)').bind(await digest(token),userId,Date.now()+7*86400000).run();return `bead_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${new URL(request.url).protocol==='https:'?'; Secure':''}`;}
+import type { D1Database } from "@cloudflare/workers-types";
+export const hex = (buffer: ArrayBuffer) =>
+  Array.from(new Uint8Array(buffer), (n) =>
+    n.toString(16).padStart(2, "0"),
+  ).join("");
+export const digest = async (s: string) =>
+  hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)));
+export const random = () =>
+  hex(crypto.getRandomValues(new Uint8Array(32)).buffer);
+const iterations = 100000;
+async function derive(password: string, salt: string) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  return hex(
+    await crypto.subtle.deriveBits(
+      {
+        name: "PBKDF2",
+        salt: new TextEncoder().encode(salt),
+        iterations,
+        hash: "SHA-256",
+      },
+      key,
+      256,
+    ),
+  );
+}
+export async function hashPassword(password: string) {
+  const salt = random();
+  return `pbkdf2:${iterations}:${salt}:${await derive(password, salt)}`;
+}
+export async function verifyPassword(password: string, stored: string) {
+  const parts = stored.split(":");
+  if (parts[0] !== "pbkdf2" || parts[1] !== String(iterations)) return false;
+  const actual = await derive(password, parts[2]);
+  let diff = actual.length ^ parts[3].length;
+  for (let i = 0; i < actual.length; i++)
+    diff |= actual.charCodeAt(i) ^ parts[3].charCodeAt(i);
+  return diff === 0;
+}
+export async function sessionUser(db: D1Database, request: Request) {
+  const token = request.headers
+    .get("Cookie")
+    ?.match(/(?:^|;\s*)bead_session=([a-f0-9]{64})(?:;|$)/)?.[1];
+  if (!token) return null;
+  return db
+    .prepare(
+      "SELECT u.id,u.email,u.name,u.role FROM users u JOIN sessions s ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?",
+    )
+    .bind(await digest(token), Date.now())
+    .first<{
+      id: string;
+      email: string;
+      name: string;
+      role: "admin" | "customer";
+    }>();
+}
+export async function newSession(
+  db: D1Database,
+  userId: string,
+  request: Request,
+) {
+  const token = random();
+  await db
+    .prepare(
+      "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",
+    )
+    .bind(await digest(token), userId, Date.now() + 7 * 86400000)
+    .run();
+  return `bead_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${new URL(request.url).protocol === "https:" ? "; Secure" : ""}`;
+}

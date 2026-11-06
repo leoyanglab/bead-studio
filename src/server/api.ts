@@ -1,52 +1,495 @@
-import { H3 } from 'h3';
-import type { D1Database } from '@cloudflare/workers-types';
-import { defaultDesign, library, presets, valid, quote } from '../catalog';
-import { digest, hashPassword, newSession, sessionUser, verifyPassword } from './auth';
-export type Env={DB:D1Database;ASSETS?:{fetch:(r:Request)=>Promise<Response>};ORDERS_ENABLED?:string;PAYMENT_INSTRUCTIONS?:string};
-class ApiError extends Error{constructor(public status:number,message:string){super(message);}}
-const fail=(status:number,message:string):never=>{throw new ApiError(status,message);};
-const text=(x:unknown,max:number,min=1)=>typeof x==='string'&&x.trim().length>=min&&x.trim().length<=max?x.trim():fail(400,'填写内容不完整或长度不符合要求');
-const cleanDesign=(x:unknown)=>{if(!valid(x))fail(400,'设计数据无效');const d=x as ReturnType<typeof defaultDesign>;return {name:d.name.trim()||'未命名设计',ids:[...d.ids],wrist:d.wrist};};
-export const stateLabels:Record<string,string>={pending:'待商家确认',awaiting_payment:'待付款',payment_review:'核款中',paid:'已核款 · 待制作',making:'制作中',shipped:'已发货',completed:'已完成',cancelled:'已取消'};
-const transitions:Record<string,string[]>={pending:['awaiting_payment','cancelled'],awaiting_payment:['paid','cancelled'],payment_review:['paid','awaiting_payment','cancelled'],paid:['making'],making:['shipped'],shipped:['completed']};
-export function createApi(env:Env){
-const app=new H3();
-const route=(method:'get'|'post'|'patch'|'delete',path:string,handler:(r:Request,params:Record<string,string>)=>Promise<unknown>)=>app[method](path,async event=>{try{
- const req=event.req as Request;
- if(method!=='get'){const origin=req.headers.get('origin');if(origin&&origin!==new URL(req.url).origin)fail(403,'请求来源无效');if(req.headers.get('content-type')?.split(';')[0]!=='application/json')fail(415,'请使用 JSON 请求');}
- const data=await handler(req,(event.context.params||{}) as Record<string,string>);
- if(data instanceof Response)return data;
- return Response.json(data,{headers:{'Cache-Control':'no-store'}});
-}catch(e){if(e instanceof ApiError)return Response.json({message:e.message},{status:e.status,headers:{'Cache-Control':'no-store'}});console.error('API error',e instanceof Error?e.name:'unknown');return Response.json({message:'服务暂时不可用，请稍后重试'},{status:500});}});
-async function body(r:Request){const reader=r.body?.getReader();if(!reader)return fail(400,'请求内容为空');let size=0;const chunks:Uint8Array[]=[];while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>16384){await reader.cancel();fail(413,'请求内容过大');}chunks.push(value);}try{const all=new Uint8Array(size);let pos=0;for(const c of chunks){all.set(c,pos);pos+=c.length;}return JSON.parse(new TextDecoder().decode(all));}catch{return fail(400,'JSON 格式无效');}}
-async function who(r:Request,admin=false){const u=await sessionUser(env.DB,r);if(!u)fail(401,'请先登录');if(admin&&u!.role!=='admin')fail(403,'需要管理员权限');return u!;}
-async function limit(r:Request,group:string,max:number,seconds:number){const key=await digest(`${group}:${r.headers.get('CF-Connecting-IP')||'local'}`);const now=Date.now();await env.DB.prepare('INSERT INTO auth_limits(key,count,expires_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN expires_at<? THEN 1 ELSE count+1 END,expires_at=CASE WHEN expires_at<? THEN excluded.expires_at ELSE expires_at END').bind(key,now+seconds*1000,now,now).run();const row=await env.DB.prepare('SELECT count FROM auth_limits WHERE key=?').bind(key).first<{count:number}>();if(row!.count>max)fail(429,'操作太频繁，请稍后再试');}
-route('get','/api/health',async()=>({ok:true,framework:'h3-v2',rendering:'ssr'}));
-route('get','/api/catalog',async()=>({library,presets}));
-route('get','/api/me',async r=>({user:await sessionUser(env.DB,r)}));
-route('get','/api/shop',async()=>({ordersEnabled:env.ORDERS_ENABLED==='true',labor:2000,shipping:1000,paymentInstructions:env.PAYMENT_INSTRUCTIONS||'请等待商家确认订单。商家提供收款信息后再付款，请勿向陌生账户转账。',stateLabels}));
-for(const mode of ['register','login'] as const)route('post',`/api/auth/${mode}`,async r=>{await limit(r,'auth',20,900);const d=await body(r);const email=text(d.email,254).toLowerCase();const password=text(d.password,128,10);if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,'请输入有效邮箱');let u: {id:string;email:string;name:string;role:'admin'|'customer';password_hash?:string}|null;
- if(mode==='register'){const name=text(d.name,30);if(await env.DB.prepare('SELECT id FROM users WHERE email=?').bind(email).first())fail(409,'此邮箱已注册，请登录');const id=crypto.randomUUID();try{await env.DB.prepare('INSERT INTO users(id,email,name,password_hash,created_at) VALUES(?,?,?,?,?)').bind(id,email,name,await hashPassword(password),new Date().toISOString()).run();}catch{fail(409,'注册失败，请稍后重试或登录已有账号');}u={id,email,name,role:'customer'};
- }else{u=await env.DB.prepare('SELECT id,email,name,role,password_hash FROM users WHERE email=?').bind(email).first();const stored=u?.password_hash||'pbkdf2:100000:dummy:0000000000000000000000000000000000000000000000000000000000000000';if(!await verifyPassword(password,stored)||!u)fail(401,'邮箱或密码错误');}
- const cookie=await newSession(env.DB,u!.id,r);return Response.json({user:{id:u!.id,email:u!.email,name:u!.name,role:u!.role}},{headers:{'Set-Cookie':cookie,'Cache-Control':'no-store'}});
-});
-route('post','/api/auth/logout',async r=>{const token=r.headers.get('cookie')?.match(/(?:^|;\s*)bead_session=([a-f0-9]{64})/)?.[1];if(token)await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await digest(token)).run();return Response.json({ok:true},{headers:{'Set-Cookie':'bead_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0','Cache-Control':'no-store'}});});
-route('post','/api/auth/password',async r=>{await limit(r,'password',10,900);const u=await who(r);const d=await body(r);const old=text(d.currentPassword,128,10),next=text(d.password,128,10);const row=await env.DB.prepare('SELECT password_hash FROM users WHERE id=?').bind(u.id).first<{password_hash:string}>();if(!await verifyPassword(old,row!.password_hash))fail(400,'当前密码错误');await env.DB.batch([env.DB.prepare('UPDATE users SET password_hash=? WHERE id=?').bind(await hashPassword(next),u.id),env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(u.id)]);return Response.json({ok:true},{headers:{'Set-Cookie':await newSession(env.DB,u.id,r),'Cache-Control':'no-store'}});});
-route('get','/api/designs',async r=>{const u=await who(r);const list=await env.DB.prepare('SELECT id,data,created_at FROM designs WHERE user_id=? ORDER BY created_at DESC LIMIT 100').bind(u.id).all();return {designs:list.results.map((x:any)=>({id:x.id,...JSON.parse(x.data),createdAt:x.created_at}))};});
-route('post','/api/designs',async r=>{const u=await who(r);await limit(r,'designs:'+u.id,100,3600);const d=cleanDesign(await body(r));const id=crypto.randomUUID();await env.DB.prepare('INSERT INTO designs(id,user_id,name,data,created_at) VALUES(?,?,?,?,?)').bind(id,u.id,d.name,JSON.stringify(d),new Date().toISOString()).run();return {id,design:d};});
-route('get','/api/designs/:id',async(_r,p)=>{const d=await env.DB.prepare('SELECT id,data FROM designs WHERE id=?').bind(p.id).first<{id:string;data:string}>();if(!d)fail(404,'设计不存在或已删除');return {id:d!.id,design:JSON.parse(d!.data)};});
-route('delete','/api/designs/:id',async(r,p)=>{const u=await who(r);await env.DB.prepare('DELETE FROM designs WHERE id=? AND user_id=?').bind(p.id,u.id).run();return {ok:true};});
-route('post','/api/quote',async r=>{const d=await body(r),design=cleanDesign(d.design);const quantity=Number(d.quantity);if(!design.ids.length||!Number.isInteger(quantity)||quantity<1||quantity>20)fail(400,'请选择珠子，数量应为 1–20 条');const materials=quote(design)*quantity,labor=2000*quantity,shipping=1000;return {materials,labor,shipping,total:materials+labor+shipping,quantity};});
-route('post','/api/orders',async r=>{const u=await who(r);if(env.ORDERS_ENABLED!=='true')fail(503,'商家尚未开放接单，请先保存设计');await limit(r,'orders:'+u.id,30,3600);const d=await body(r),design=cleanDesign(d.design);const quantity=Number(d.quantity);if(!design.ids.length||!Number.isInteger(quantity)||quantity<1||quantity>20)fail(400,'设计或数量无效');const key=text(d.idempotencyKey,80,10);const recipient=text(d.recipient,40),phone=text(d.phone,25,6),address=text(d.address,300,8),note=typeof d.note==='string'?text(d.note,500,0):'';if(!/^[+\d\s()-]{6,25}$/.test(phone))fail(400,'联系电话格式不正确');const old=await env.DB.prepare('SELECT id FROM orders WHERE user_id=? AND idempotency_key=?').bind(u.id,key).first();if(old)return old;
- const id=crypto.randomUUID(),now=new Date().toISOString(),materials=quote(design)*quantity,labor=2000*quantity,shipping=1000;try{await env.DB.prepare('INSERT INTO orders(id,user_id,design,quantity,materials,labor,shipping,total,status,recipient,phone,address,note,idempotency_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(id,u.id,JSON.stringify(design),quantity,materials,labor,shipping,materials+labor+shipping,'pending',recipient,phone,address,note,key,now,now).run();}catch(e){const existing=await env.DB.prepare('SELECT id FROM orders WHERE user_id=? AND idempotency_key=?').bind(u.id,key).first();if(existing)return existing;throw e;}return {id};});
-route('get','/api/orders',async r=>{const u=await who(r);return {orders:(await env.DB.prepare('SELECT * FROM orders WHERE user_id=? ORDER BY created_at DESC LIMIT 100').bind(u.id).all()).results.map((o:any)=>({...o,design:JSON.parse(o.design),idempotency_key:undefined}))};});
-route('patch','/api/orders/:id',async(r,p)=>{const u=await who(r),d=await body(r);const o=await env.DB.prepare('SELECT * FROM orders WHERE id=? AND user_id=?').bind(p.id,u.id).first<any>();if(!o)fail(404,'订单不存在');let next=o.status,tracking=o.tracking;
- if(d.action==='cancel'&&['pending','awaiting_payment','payment_review'].includes(o.status))next='cancelled';
- else if(d.action==='received'&&o.status==='shipped')next='completed';
- else if(d.action==='payment'&&o.status==='awaiting_payment'){next='payment_review';await env.DB.prepare('UPDATE orders SET payment_note=? WHERE id=? AND user_id=?').bind(text(d.paymentNote,300,3),p.id,u.id).run();}
- else fail(409,'当前订单状态不支持此操作');
- const result=await env.DB.prepare('UPDATE orders SET status=?,tracking=?,updated_at=? WHERE id=? AND user_id=? AND status=?').bind(next,tracking,new Date().toISOString(),p.id,u.id,o.status).run();if(!result.meta.changes)fail(409,'订单状态已变化，请刷新');return {ok:true};});
-route('get','/api/admin/orders',async r=>{await who(r,true);return {orders:(await env.DB.prepare('SELECT * FROM orders ORDER BY created_at DESC LIMIT 200').all()).results.map((o:any)=>({...o,design:JSON.parse(o.design),idempotency_key:undefined}))};});
-route('patch','/api/admin/orders/:id',async(r,p)=>{await who(r,true);const d=await body(r);const o=await env.DB.prepare('SELECT * FROM orders WHERE id=?').bind(p.id).first<any>();if(!o)fail(404,'订单不存在');const next=text(d.status,30);if(!transitions[o.status]?.includes(next))fail(409,'订单状态流转无效');const tracking=next==='shipped'?text(d.tracking,120,3):o.tracking;const updated=await env.DB.prepare('UPDATE orders SET status=?,tracking=?,updated_at=? WHERE id=? AND status=?').bind(next,tracking,new Date().toISOString(),p.id,o.status).run();if(!updated.meta.changes)fail(409,'订单状态已变化，请刷新');return {ok:true};});
-app.all('/api/**',()=>Response.json({message:'接口不存在'},{status:404}));return app;
+import { H3 } from "h3";
+import type { D1Database } from "@cloudflare/workers-types";
+import { defaultDesign, library, presets, valid, quote } from "../catalog";
+import {
+  digest,
+  hashPassword,
+  newSession,
+  sessionUser,
+  verifyPassword,
+} from "./auth";
+export type Env = {
+  DB: D1Database;
+  ASSETS?: { fetch: (r: Request) => Promise<Response> };
+  ORDERS_ENABLED?: string;
+  PAYMENT_INSTRUCTIONS?: string;
+};
+class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+const fail = (status: number, message: string): never => {
+  throw new ApiError(status, message);
+};
+const text = (x: unknown, max: number, min = 1) =>
+  typeof x === "string" && x.trim().length >= min && x.trim().length <= max
+    ? x.trim()
+    : fail(400, "填写内容不完整或长度不符合要求");
+const cleanDesign = (x: unknown) => {
+  if (!valid(x)) fail(400, "设计数据无效");
+  const d = x as ReturnType<typeof defaultDesign>;
+  return {
+    name: d.name.trim() || "未命名设计",
+    ids: [...d.ids],
+    wrist: d.wrist,
+  };
+};
+export const stateLabels: Record<string, string> = {
+  pending: "待商家确认",
+  awaiting_payment: "待付款",
+  payment_review: "核款中",
+  paid: "已核款 · 待制作",
+  making: "制作中",
+  shipped: "已发货",
+  completed: "已完成",
+  cancelled: "已取消",
+};
+const transitions: Record<string, string[]> = {
+  pending: ["awaiting_payment", "cancelled"],
+  awaiting_payment: ["paid", "cancelled"],
+  payment_review: ["paid", "awaiting_payment", "cancelled"],
+  paid: ["making"],
+  making: ["shipped"],
+  shipped: ["completed"],
+};
+export function createApi(env: Env) {
+  const app = new H3();
+  const route = (
+    method: "get" | "post" | "patch" | "delete",
+    path: string,
+    handler: (r: Request, params: Record<string, string>) => Promise<unknown>,
+  ) =>
+    app[method](path, async (event) => {
+      try {
+        const req = event.req as Request;
+        if (method !== "get") {
+          const origin = req.headers.get("origin");
+          if (origin && origin !== new URL(req.url).origin)
+            fail(403, "请求来源无效");
+          if (
+            req.headers.get("content-type")?.split(";")[0] !==
+            "application/json"
+          )
+            fail(415, "请使用 JSON 请求");
+        }
+        const data = await handler(
+          req,
+          (event.context.params || {}) as Record<string, string>,
+        );
+        if (data instanceof Response) return data;
+        return Response.json(data, {
+          headers: { "Cache-Control": "no-store" },
+        });
+      } catch (e) {
+        if (e instanceof ApiError)
+          return Response.json(
+            { message: e.message },
+            { status: e.status, headers: { "Cache-Control": "no-store" } },
+          );
+        console.error("API error", e instanceof Error ? e.name : "unknown");
+        return Response.json(
+          { message: "服务暂时不可用，请稍后重试" },
+          { status: 500 },
+        );
+      }
+    });
+  async function body(r: Request) {
+    const reader = r.body?.getReader();
+    if (!reader) return fail(400, "请求内容为空");
+    let size = 0;
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 16384) {
+        await reader.cancel();
+        fail(413, "请求内容过大");
+      }
+      chunks.push(value);
+    }
+    try {
+      const all = new Uint8Array(size);
+      let pos = 0;
+      for (const c of chunks) {
+        all.set(c, pos);
+        pos += c.length;
+      }
+      return JSON.parse(new TextDecoder().decode(all));
+    } catch {
+      return fail(400, "JSON 格式无效");
+    }
+  }
+  async function who(r: Request, admin = false) {
+    const u = await sessionUser(env.DB, r);
+    if (!u) fail(401, "请先登录");
+    if (admin && u!.role !== "admin") fail(403, "需要管理员权限");
+    return u!;
+  }
+  async function limit(
+    r: Request,
+    group: string,
+    max: number,
+    seconds: number,
+  ) {
+    const key = await digest(
+      `${group}:${r.headers.get("CF-Connecting-IP") || "local"}`,
+    );
+    const now = Date.now();
+    await env.DB.prepare(
+      "INSERT INTO auth_limits(key,count,expires_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN expires_at<? THEN 1 ELSE count+1 END,expires_at=CASE WHEN expires_at<? THEN excluded.expires_at ELSE expires_at END",
+    )
+      .bind(key, now + seconds * 1000, now, now)
+      .run();
+    const row = await env.DB.prepare(
+      "SELECT count FROM auth_limits WHERE key=?",
+    )
+      .bind(key)
+      .first<{ count: number }>();
+    if (row!.count > max) fail(429, "操作太频繁，请稍后再试");
+  }
+  route("get", "/api/health", async () => ({
+    ok: true,
+    framework: "h3-v2",
+    rendering: "ssr",
+  }));
+  route("get", "/api/catalog", async () => ({ library, presets }));
+  route("get", "/api/me", async (r) => ({
+    user: await sessionUser(env.DB, r),
+  }));
+  route("get", "/api/shop", async () => ({
+    ordersEnabled: env.ORDERS_ENABLED === "true",
+    labor: 2000,
+    shipping: 1000,
+    paymentInstructions:
+      env.PAYMENT_INSTRUCTIONS ||
+      "请等待商家确认订单。商家提供收款信息后再付款，请勿向陌生账户转账。",
+    stateLabels,
+  }));
+  for (const mode of ["register", "login"] as const)
+    route("post", `/api/auth/${mode}`, async (r) => {
+      await limit(r, "auth", 20, 900);
+      const d = await body(r);
+      const email = text(d.email, 254).toLowerCase();
+      const password = text(d.password, 128, 10);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+        fail(400, "请输入有效邮箱");
+      let u: {
+        id: string;
+        email: string;
+        name: string;
+        role: "admin" | "customer";
+        password_hash?: string;
+      } | null;
+      if (mode === "register") {
+        const name = text(d.name, 30);
+        if (
+          await env.DB.prepare("SELECT id FROM users WHERE email=?")
+            .bind(email)
+            .first()
+        )
+          fail(409, "此邮箱已注册，请登录");
+        const id = crypto.randomUUID();
+        try {
+          await env.DB.prepare(
+            "INSERT INTO users(id,email,name,password_hash,created_at) VALUES(?,?,?,?,?)",
+          )
+            .bind(
+              id,
+              email,
+              name,
+              await hashPassword(password),
+              new Date().toISOString(),
+            )
+            .run();
+        } catch {
+          fail(409, "注册失败，请稍后重试或登录已有账号");
+        }
+        u = { id, email, name, role: "customer" };
+      } else {
+        u = await env.DB.prepare(
+          "SELECT id,email,name,role,password_hash FROM users WHERE email=?",
+        )
+          .bind(email)
+          .first();
+        const stored =
+          u?.password_hash ||
+          "pbkdf2:100000:dummy:0000000000000000000000000000000000000000000000000000000000000000";
+        if (!(await verifyPassword(password, stored)) || !u)
+          fail(401, "邮箱或密码错误");
+      }
+      const cookie = await newSession(env.DB, u!.id, r);
+      return Response.json(
+        { user: { id: u!.id, email: u!.email, name: u!.name, role: u!.role } },
+        { headers: { "Set-Cookie": cookie, "Cache-Control": "no-store" } },
+      );
+    });
+  route("post", "/api/auth/logout", async (r) => {
+    const token = r.headers
+      .get("cookie")
+      ?.match(/(?:^|;\s*)bead_session=([a-f0-9]{64})/)?.[1];
+    if (token)
+      await env.DB.prepare("DELETE FROM sessions WHERE token_hash=?")
+        .bind(await digest(token))
+        .run();
+    return Response.json(
+      { ok: true },
+      {
+        headers: {
+          "Set-Cookie":
+            "bead_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+          "Cache-Control": "no-store",
+        },
+      },
+    );
+  });
+  route("post", "/api/auth/password", async (r) => {
+    await limit(r, "password", 10, 900);
+    const u = await who(r);
+    const d = await body(r);
+    const old = text(d.currentPassword, 128, 10),
+      next = text(d.password, 128, 10);
+    const row = await env.DB.prepare(
+      "SELECT password_hash FROM users WHERE id=?",
+    )
+      .bind(u.id)
+      .first<{ password_hash: string }>();
+    if (!(await verifyPassword(old, row!.password_hash)))
+      fail(400, "当前密码错误");
+    await env.DB.batch([
+      env.DB.prepare("UPDATE users SET password_hash=? WHERE id=?").bind(
+        await hashPassword(next),
+        u.id,
+      ),
+      env.DB.prepare("DELETE FROM sessions WHERE user_id=?").bind(u.id),
+    ]);
+    return Response.json(
+      { ok: true },
+      {
+        headers: {
+          "Set-Cookie": await newSession(env.DB, u.id, r),
+          "Cache-Control": "no-store",
+        },
+      },
+    );
+  });
+  route("get", "/api/designs", async (r) => {
+    const u = await who(r);
+    const list = await env.DB.prepare(
+      "SELECT id,data,created_at FROM designs WHERE user_id=? ORDER BY created_at DESC LIMIT 100",
+    )
+      .bind(u.id)
+      .all();
+    return {
+      designs: list.results.map((x: any) => ({
+        id: x.id,
+        ...JSON.parse(x.data),
+        createdAt: x.created_at,
+      })),
+    };
+  });
+  route("post", "/api/designs", async (r) => {
+    const u = await who(r);
+    await limit(r, "designs:" + u.id, 100, 3600);
+    const d = cleanDesign(await body(r));
+    const id = crypto.randomUUID();
+    await env.DB.prepare(
+      "INSERT INTO designs(id,user_id,name,data,created_at) VALUES(?,?,?,?,?)",
+    )
+      .bind(id, u.id, d.name, JSON.stringify(d), new Date().toISOString())
+      .run();
+    return { id, design: d };
+  });
+  route("get", "/api/designs/:id", async (_r, p) => {
+    const d = await env.DB.prepare("SELECT id,data FROM designs WHERE id=?")
+      .bind(p.id)
+      .first<{ id: string; data: string }>();
+    if (!d) fail(404, "设计不存在或已删除");
+    return { id: d!.id, design: JSON.parse(d!.data) };
+  });
+  route("delete", "/api/designs/:id", async (r, p) => {
+    const u = await who(r);
+    await env.DB.prepare("DELETE FROM designs WHERE id=? AND user_id=?")
+      .bind(p.id, u.id)
+      .run();
+    return { ok: true };
+  });
+  route("post", "/api/quote", async (r) => {
+    const d = await body(r),
+      design = cleanDesign(d.design);
+    const quantity = Number(d.quantity);
+    if (
+      !design.ids.length ||
+      !Number.isInteger(quantity) ||
+      quantity < 1 ||
+      quantity > 20
+    )
+      fail(400, "请选择珠子，数量应为 1–20 条");
+    const materials = quote(design) * quantity,
+      labor = 2000 * quantity,
+      shipping = 1000;
+    return {
+      materials,
+      labor,
+      shipping,
+      total: materials + labor + shipping,
+      quantity,
+    };
+  });
+  route("post", "/api/orders", async (r) => {
+    const u = await who(r);
+    if (env.ORDERS_ENABLED !== "true")
+      fail(503, "商家尚未开放接单，请先保存设计");
+    await limit(r, "orders:" + u.id, 30, 3600);
+    const d = await body(r),
+      design = cleanDesign(d.design);
+    const quantity = Number(d.quantity);
+    if (
+      !design.ids.length ||
+      !Number.isInteger(quantity) ||
+      quantity < 1 ||
+      quantity > 20
+    )
+      fail(400, "设计或数量无效");
+    const key = text(d.idempotencyKey, 80, 10);
+    const recipient = text(d.recipient, 40),
+      phone = text(d.phone, 25, 6),
+      address = text(d.address, 300, 8),
+      note = typeof d.note === "string" ? text(d.note, 500, 0) : "";
+    if (!/^[+\d\s()-]{6,25}$/.test(phone)) fail(400, "联系电话格式不正确");
+    const old = await env.DB.prepare(
+      "SELECT id FROM orders WHERE user_id=? AND idempotency_key=?",
+    )
+      .bind(u.id, key)
+      .first();
+    if (old) return old;
+    const id = crypto.randomUUID(),
+      now = new Date().toISOString(),
+      materials = quote(design) * quantity,
+      labor = 2000 * quantity,
+      shipping = 1000;
+    try {
+      await env.DB.prepare(
+        "INSERT INTO orders(id,user_id,design,quantity,materials,labor,shipping,total,status,recipient,phone,address,note,idempotency_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      )
+        .bind(
+          id,
+          u.id,
+          JSON.stringify(design),
+          quantity,
+          materials,
+          labor,
+          shipping,
+          materials + labor + shipping,
+          "pending",
+          recipient,
+          phone,
+          address,
+          note,
+          key,
+          now,
+          now,
+        )
+        .run();
+    } catch (e) {
+      const existing = await env.DB.prepare(
+        "SELECT id FROM orders WHERE user_id=? AND idempotency_key=?",
+      )
+        .bind(u.id, key)
+        .first();
+      if (existing) return existing;
+      throw e;
+    }
+    return { id };
+  });
+  route("get", "/api/orders", async (r) => {
+    const u = await who(r);
+    return {
+      orders: (
+        await env.DB.prepare(
+          "SELECT * FROM orders WHERE user_id=? ORDER BY created_at DESC LIMIT 100",
+        )
+          .bind(u.id)
+          .all()
+      ).results.map((o: any) => ({
+        ...o,
+        design: JSON.parse(o.design),
+        idempotency_key: undefined,
+      })),
+    };
+  });
+  route("patch", "/api/orders/:id", async (r, p) => {
+    const u = await who(r),
+      d = await body(r);
+    const o = await env.DB.prepare(
+      "SELECT * FROM orders WHERE id=? AND user_id=?",
+    )
+      .bind(p.id, u.id)
+      .first<any>();
+    if (!o) fail(404, "订单不存在");
+    let next = o.status,
+      tracking = o.tracking;
+    if (
+      d.action === "cancel" &&
+      ["pending", "awaiting_payment", "payment_review"].includes(o.status)
+    )
+      next = "cancelled";
+    else if (d.action === "received" && o.status === "shipped")
+      next = "completed";
+    else if (d.action === "payment" && o.status === "awaiting_payment") {
+      next = "payment_review";
+      await env.DB.prepare(
+        "UPDATE orders SET payment_note=? WHERE id=? AND user_id=?",
+      )
+        .bind(text(d.paymentNote, 300, 3), p.id, u.id)
+        .run();
+    } else fail(409, "当前订单状态不支持此操作");
+    const result = await env.DB.prepare(
+      "UPDATE orders SET status=?,tracking=?,updated_at=? WHERE id=? AND user_id=? AND status=?",
+    )
+      .bind(next, tracking, new Date().toISOString(), p.id, u.id, o.status)
+      .run();
+    if (!result.meta.changes) fail(409, "订单状态已变化，请刷新");
+    return { ok: true };
+  });
+  route("get", "/api/admin/orders", async (r) => {
+    await who(r, true);
+    return {
+      orders: (
+        await env.DB.prepare(
+          "SELECT * FROM orders ORDER BY created_at DESC LIMIT 200",
+        ).all()
+      ).results.map((o: any) => ({
+        ...o,
+        design: JSON.parse(o.design),
+        idempotency_key: undefined,
+      })),
+    };
+  });
+  route("patch", "/api/admin/orders/:id", async (r, p) => {
+    await who(r, true);
+    const d = await body(r);
+    const o = await env.DB.prepare("SELECT * FROM orders WHERE id=?")
+      .bind(p.id)
+      .first<any>();
+    if (!o) fail(404, "订单不存在");
+    const next = text(d.status, 30);
+    if (!transitions[o.status]?.includes(next)) fail(409, "订单状态流转无效");
+    const tracking = next === "shipped" ? text(d.tracking, 120, 3) : o.tracking;
+    const updated = await env.DB.prepare(
+      "UPDATE orders SET status=?,tracking=?,updated_at=? WHERE id=? AND status=?",
+    )
+      .bind(next, tracking, new Date().toISOString(), p.id, o.status)
+      .run();
+    if (!updated.meta.changes) fail(409, "订单状态已变化，请刷新");
+    return { ok: true };
+  });
+  app.all("/api/**", () =>
+    Response.json({ message: "接口不存在" }, { status: 404 }),
+  );
+  return app;
 }

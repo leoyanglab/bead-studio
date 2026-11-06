@@ -1,11 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
-    ],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
@@ -17,10 +13,6 @@
     "jsxImportSource": "preact",
     "strict": true
   },
-  "include": [
-    "src"
-  ],
-  "exclude": [
-    "src/main.tsx"
-  ]
+  "include": ["src"],
+  "exclude": ["src/main.tsx"]
 }

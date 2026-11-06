@@ -1,29 +1,694 @@
-import { useEffect } from 'preact/hooks';
-import { useSignal } from '@preact/signals';
-import { X, ArrowRight, UserRound, Package, LogOut, ShoppingBag, LockKeyhole } from 'lucide-preact';
-import { api,useStore } from './model';
-const cash=(n:number)=>`¥${(n/100).toFixed(2)}`;
-const labels:Record<string,string>={pending:'待商家确认',awaiting_payment:'待付款',payment_review:'核款中',paid:'已核款 · 待制作',making:'制作中',shipped:'已发货',completed:'已完成',cancelled:'已取消'};
-export function AccountFlow(){
- const s=useStore(),{user,accountPanel,notify}=s;
- const error=useSignal(''),busy=useSignal(false),orders=useSignal<any[]>([]),designs=useSignal<any[]>([]),shop=useSignal<any>(null),estimate=useSignal<any>(null),quantity=useSignal(1),passwordMode=useSignal(false),paymentTarget=useSignal<string|null>(null),paymentNote=useSignal(''),tracking=useSignal(''),key=useSignal('');
- const panel=accountPanel.value;
- async function refresh(){if(!panel||panel==='login'||panel==='register')return;try{shop.value=await api('/api/shop');if(panel==='orders'||panel==='admin')orders.value=(await api(panel==='admin'?'/api/admin/orders':'/api/orders')).orders;if(panel==='account')designs.value=(await api('/api/designs')).designs;}catch(e){error.value=(e as Error).message;}}
- useEffect(()=>{error.value='';paymentTarget.value=null;passwordMode.value=false;if(panel==='checkout'){key.value=crypto.randomUUID();quantity.value=1;}void refresh();},[panel]);
- useEffect(()=>{if(panel!=='checkout')return;let active=true;api('/api/quote',{method:'POST',body:JSON.stringify({design:s.current(),quantity:quantity.value})}).then(d=>{if(active)estimate.value=d;}).catch(e=>{if(active)error.value=e.message;});return()=>{active=false;};},[panel,quantity.value,s.ids.value]);
- if(!panel)return null;
- async function action(fn:()=>Promise<void>){if(busy.value)return;busy.value=true;error.value='';try{await fn();}catch(e){error.value=(e as Error).message;}finally{busy.value=false;}}
- async function auth(e:SubmitEvent){e.preventDefault();const f=new FormData(e.currentTarget as HTMLFormElement);await action(async()=>{const d=await api(`/api/auth/${panel}`,{method:'POST',body:JSON.stringify(Object.fromEntries(f))});user.value=d.user;accountPanel.value='account';notify(panel==='register'?'注册成功，欢迎来到珠间':'登录成功');});}
- async function checkout(e:SubmitEvent){e.preventDefault();const f=new FormData(e.currentTarget as HTMLFormElement);await action(async()=>{const d=await api('/api/orders',{method:'POST',body:JSON.stringify({...Object.fromEntries(f),design:s.current(),quantity:quantity.value,idempotencyKey:key.value})});accountPanel.value='orders';notify(`定制订单已提交 · ${d.id.slice(0,8)}`);});}
- async function updateOrder(id:string,data:unknown,admin=false){await action(async()=>{await api(`${admin?'/api/admin':'/api'}/orders/${id}`,{method:'PATCH',body:JSON.stringify(data)});paymentTarget.value=null;await refresh();notify('订单状态已更新');});}
- const title=panel==='login'?'欢迎回来。':panel==='register'?'在珠间，留下你的灵感。':panel==='account'?'我的手作空间':panel==='checkout'?'把喜欢，变成一条手串。':panel==='admin'?'商家订单工作台':'我的定制订单';
- return <div class="modal-backdrop" onClick={e=>{if(e.target===e.currentTarget&&!busy.value)accountPanel.value=null;}}><section class={`modal commerce-modal ${panel==='orders'||panel==='admin'?'wide':''}`} role="dialog" aria-modal="true" aria-labelledby="account-title"><button class="close" aria-label="关闭账户窗口" disabled={busy.value} onClick={()=>accountPanel.value=null}><X size={20}/></button><span class="eyebrow">BEAD STUDIO / {panel==='admin'?'MERCHANT':'YOUR LITTLE CORNER'}</span><h2 id="account-title">{title}</h2>
- {(panel==='login'||panel==='register')&&<form class="form" onSubmit={auth}>{panel==='register'&&<label>称呼<input required name="name" maxLength={30} autoComplete="nickname" placeholder="怎么称呼你"/></label>}<label>登录邮箱<input required name="email" type="email" autoComplete="email" maxLength={254} placeholder="you@example.com"/></label><label>密码<input required name="password" type="password" minLength={10} maxLength={128} autoComplete={panel==='login'?'current-password':'new-password'} placeholder="至少 10 个字符"/></label><p class="form-hint">邮箱作为登录标识。当前不支持邮件验证和自助找回密码，请妥善保管密码。</p><button class="primary" disabled={busy.value}>{busy.value?'正在处理…':panel==='login'?'登录':'创建账号'}<ArrowRight size={16}/></button><button type="button" class="text-button" onClick={()=>accountPanel.value=panel==='login'?'register':'login'}>{panel==='login'?'还没有账号？注册一个':'已有账号？去登录'}</button></form>}
- {panel==='account'&&user.value&&<><div class="profile-card"><UserRound size={26}/><div><strong>{user.value.name}</strong><p>{user.value.email}</p></div><span>{user.value.role==='admin'?'商家':'手作玩家'}</span></div><div class="account-menu"><button onClick={()=>accountPanel.value='orders'}><Package size={18}/> 我的订单 <ArrowRight size={15}/></button><button onClick={()=>accountPanel.value='checkout'}><ShoppingBag size={18}/> 定制当前设计 <ArrowRight size={15}/></button>{user.value.role==='admin'&&<button onClick={()=>accountPanel.value='admin'}><Package size={18}/> 商家订单管理 <ArrowRight size={15}/></button>}<button onClick={()=>passwordMode.value=!passwordMode.value}><LockKeyhole size={18}/> 修改密码</button><button onClick={()=>action(async()=>{await api('/api/auth/logout',{method:'POST',body:'{}'});user.value=null;accountPanel.value=null;notify('已退出登录');})}><LogOut size={18}/> 退出登录</button></div>{passwordMode.value&&<form class="form compact" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void action(async()=>{await api('/api/auth/password',{method:'POST',body:JSON.stringify(Object.fromEntries(f))});passwordMode.value=false;notify('密码已更新，其他登录会话已退出');});}}><label>当前密码<input name="currentPassword" type="password" required minLength={10} autoComplete="current-password"/></label><label>新密码<input name="password" type="password" required minLength={10} maxLength={128} autoComplete="new-password"/></label><button class="primary" disabled={busy.value}>更新密码</button></form>}<h3 class="cloud-title">云端设计 <small>{designs.value.length} 份</small></h3><p class="form-hint">云端链接可供持有链接的人查看并复制编辑，不包含你的账户和订单信息。</p><div class="cloud-designs">{designs.value.length?designs.value.map(d=><div><span><b>{d.name}</b><small>{d.ids.length} 颗 · {new Date(d.createdAt).toLocaleDateString('zh-CN')}</small></span><button onClick={()=>{s.load(d);accountPanel.value=null;notify('已载入云端设计');}}>编辑</button><a href={`/design/${d.id}`} target="_blank" rel="noreferrer">分享页</a><button onClick={()=>action(async()=>{await api(`/api/designs/${d.id}`,{method:'DELETE',body:'{}'});await refresh();})}>删除</button></div>):<p>还没有云端设计，回到工作台保存一份吧。</p>}</div></>}
- {panel==='checkout'&&<form class="form" onSubmit={checkout}><div class="checkout-design"><span>你的专属设计</span><strong>{s.name.value||'未命名设计'}</strong><small>{s.ids.value.length} 颗珠子 / 目标手围 {s.wrist.value} cm</small></div><label>定制数量<input type="number" min="1" max="20" value={quantity.value} required onInput={e=>quantity.value=Number(e.currentTarget.value)}/></label>{estimate.value&&<div class="price-breakdown"><p>珠材参考价 <b>{cash(estimate.value.materials)}</b></p><p>手作工费 <b>{cash(estimate.value.labor)}</b></p><p>运费 <b>{cash(estimate.value.shipping)}</b></p><p class="grand-total">参考合计 <b>{cash(estimate.value.total)}</b></p></div>}<p class="guide-note">提交后由商家确认材料、报价与交期，再提供付款信息。当前价格为参考价；尚未付款、不会自动扣款。</p><div class="form-row"><label>收件人<input name="recipient" required maxLength={40} autoComplete="name" placeholder="收件人姓名"/></label><label>联系电话<input name="phone" required type="tel" minLength={6} maxLength={25} pattern="[+0-9 ()-]{6,25}" autoComplete="tel" placeholder="便于配送联系"/></label></div><label>完整收货地址<textarea name="address" required minLength={8} maxLength={300} autoComplete="street-address" placeholder="省市区、街道与门牌号"/></label><label>定制备注 <small>可选</small><textarea name="note" maxLength={500} placeholder="例如松紧喜好、包装需求"/></label><label class="consent"><input type="checkbox" required/>我确认设计和联系方式，并同意将收货信息提供给商家用于处理本次订单。</label><button class="primary" disabled={busy.value||!shop.value?.ordersEnabled||!s.ids.value.length}>{busy.value?'正在提交…':shop.value?.ordersEnabled?'提交定制订单':'商家尚未开放接单'}<ArrowRight size={16}/></button></form>}
- {(panel==='orders'||panel==='admin')&&<><div class="orders-heading"><p>{panel==='admin'?'请核实实际收款后再确认付款，填写物流信息后发货。':'从一份灵感，到一件属于你的作品。'}</p><button class="text-button" disabled={busy.value} onClick={()=>action(refresh)}>刷新订单</button></div>{orders.value.length?orders.value.map(o=><article class="order-card"><div class="order-title"><strong>{o.design.name}</strong><span class={`status-badge ${o.status}`}>{labels[o.status]||o.status}</span></div><p class="order-id">订单 {o.id} · {new Date(o.created_at).toLocaleString('zh-CN')}</p><div class="order-info"><span>{o.quantity} 条 · {o.design.ids.length} 颗 / 条 · 手围 {o.design.wrist} cm</span><b>{cash(o.total)}</b></div><p>珠材 {cash(o.materials)} · 工费 {cash(o.labor)} · 运费 {cash(o.shipping)}</p><details><summary>设计与配送详情</summary><p>{o.design.ids.join(' · ')}</p><p>收件人：{o.recipient} · {o.phone}</p><p>地址：{o.address}</p>{o.note&&<p>定制备注：{o.note}</p>}{o.payment_note&&<p>付款说明：{o.payment_note}</p>}{o.tracking&&<p>物流：{o.tracking}</p>}</details>{['awaiting_payment','payment_review'].includes(o.status)&&<p class="payment-instructions">{shop.value?.paymentInstructions}</p>}
- <div class="order-actions">{panel==='admin'?<>{({pending:['awaiting_payment','cancelled'],awaiting_payment:['paid','cancelled'],payment_review:['paid','awaiting_payment','cancelled'],paid:['making'],making:['shipped'],shipped:['completed']} as Record<string,string[]>)[o.status]?.map(next=><button disabled={busy.value} onClick={()=>{if(next==='shipped'){paymentTarget.value=o.id;tracking.value='';}else void updateOrder(o.id,{status:next},true);}}>{({awaiting_payment:'确认订单，通知付款',paid:'确认实际收款',making:'开始制作',shipped:'填写物流并发货',completed:'完成订单',cancelled:'取消订单'} as Record<string,string>)[next]}</button>)}</>:<>{['pending','awaiting_payment','payment_review'].includes(o.status)&&<button disabled={busy.value} onClick={()=>updateOrder(o.id,{action:'cancel'})}>取消订单</button>}{o.status==='awaiting_payment'&&<button disabled={busy.value} onClick={()=>{paymentTarget.value=o.id;paymentNote.value='';}}>提交付款说明</button>}{o.status==='shipped'&&<button disabled={busy.value} onClick={()=>updateOrder(o.id,{action:'received'})}>确认收货</button>}<button onClick={()=>{s.load(o.design);accountPanel.value=null;}}>载入此设计</button></>}</div>
- {paymentTarget.value===o.id&&<form class="form compact" onSubmit={e=>{e.preventDefault();void updateOrder(o.id,panel==='admin'?{status:'shipped',tracking:tracking.value}:{action:'payment',paymentNote:paymentNote.value},panel==='admin');}}><label>{panel==='admin'?'物流公司与运单号':'实际付款时间、金额及核对说明'}<input required minLength={3} maxLength={panel==='admin'?120:300} value={panel==='admin'?tracking.value:paymentNote.value} onInput={e=>panel==='admin'?tracking.value=e.currentTarget.value:paymentNote.value=e.currentTarget.value}/></label><button class="primary" disabled={busy.value}>{panel==='admin'?'确认发货':'提交商家核款'}</button></form>}</article>):<div class="empty small-empty"><Package size={30}/><h3>还没有订单</h3><button class="primary" onClick={()=>accountPanel.value=panel==='admin'?'account':'checkout'}>{panel==='admin'?'返回账户':'定制当前设计'}</button></div>}</>}
- {error.value&&<p class="form-error" role="alert">{error.value}</p>}
- </section></div>;
+import { useEffect } from "preact/hooks";
+import { useSignal } from "@preact/signals";
+import {
+  X,
+  ArrowRight,
+  UserRound,
+  Package,
+  LogOut,
+  ShoppingBag,
+  LockKeyhole,
+} from "lucide-preact";
+import { api, useStore } from "./model";
+const cash = (n: number) => `¥${(n / 100).toFixed(2)}`;
+const labels: Record<string, string> = {
+  pending: "待商家确认",
+  awaiting_payment: "待付款",
+  payment_review: "核款中",
+  paid: "已核款 · 待制作",
+  making: "制作中",
+  shipped: "已发货",
+  completed: "已完成",
+  cancelled: "已取消",
+};
+export function AccountFlow() {
+  const s = useStore(),
+    { user, accountPanel, notify } = s;
+  const error = useSignal(""),
+    busy = useSignal(false),
+    orders = useSignal<any[]>([]),
+    designs = useSignal<any[]>([]),
+    shop = useSignal<any>(null),
+    estimate = useSignal<any>(null),
+    quantity = useSignal(1),
+    passwordMode = useSignal(false),
+    paymentTarget = useSignal<string | null>(null),
+    paymentNote = useSignal(""),
+    tracking = useSignal(""),
+    key = useSignal("");
+  const panel = accountPanel.value;
+  async function refresh() {
+    if (!panel || panel === "login" || panel === "register") return;
+    try {
+      shop.value = await api("/api/shop");
+      if (panel === "orders" || panel === "admin")
+        orders.value = (
+          await api(panel === "admin" ? "/api/admin/orders" : "/api/orders")
+        ).orders;
+      if (panel === "account")
+        designs.value = (await api("/api/designs")).designs;
+    } catch (e) {
+      error.value = (e as Error).message;
+    }
+  }
+  useEffect(() => {
+    error.value = "";
+    paymentTarget.value = null;
+    passwordMode.value = false;
+    if (panel === "checkout") {
+      key.value = crypto.randomUUID();
+      quantity.value = 1;
+    }
+    void refresh();
+  }, [panel]);
+  useEffect(() => {
+    if (panel !== "checkout") return;
+    let active = true;
+    api("/api/quote", {
+      method: "POST",
+      body: JSON.stringify({ design: s.current(), quantity: quantity.value }),
+    })
+      .then((d) => {
+        if (active) estimate.value = d;
+      })
+      .catch((e) => {
+        if (active) error.value = e.message;
+      });
+    return () => {
+      active = false;
+    };
+  }, [panel, quantity.value, s.ids.value]);
+  if (!panel) return null;
+  async function action(fn: () => Promise<void>) {
+    if (busy.value) return;
+    busy.value = true;
+    error.value = "";
+    try {
+      await fn();
+    } catch (e) {
+      error.value = (e as Error).message;
+    } finally {
+      busy.value = false;
+    }
+  }
+  async function auth(e: SubmitEvent) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget as HTMLFormElement);
+    await action(async () => {
+      const d = await api(`/api/auth/${panel}`, {
+        method: "POST",
+        body: JSON.stringify(Object.fromEntries(f)),
+      });
+      user.value = d.user;
+      accountPanel.value = "account";
+      notify(panel === "register" ? "注册成功，欢迎来到珠间" : "登录成功");
+    });
+  }
+  async function checkout(e: SubmitEvent) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget as HTMLFormElement);
+    await action(async () => {
+      const d = await api("/api/orders", {
+        method: "POST",
+        body: JSON.stringify({
+          ...Object.fromEntries(f),
+          design: s.current(),
+          quantity: quantity.value,
+          idempotencyKey: key.value,
+        }),
+      });
+      accountPanel.value = "orders";
+      notify(`定制订单已提交 · ${d.id.slice(0, 8)}`);
+    });
+  }
+  async function updateOrder(id: string, data: unknown, admin = false) {
+    await action(async () => {
+      await api(`${admin ? "/api/admin" : "/api"}/orders/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      });
+      paymentTarget.value = null;
+      await refresh();
+      notify("订单状态已更新");
+    });
+  }
+  const title =
+    panel === "login"
+      ? "欢迎回来。"
+      : panel === "register"
+        ? "在珠间，留下你的灵感。"
+        : panel === "account"
+          ? "我的手作空间"
+          : panel === "checkout"
+            ? "把喜欢，变成一条手串。"
+            : panel === "admin"
+              ? "商家订单工作台"
+              : "我的定制订单";
+  return (
+    <div
+      class="modal-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !busy.value)
+          accountPanel.value = null;
+      }}
+    >
+      <section
+        class={`modal commerce-modal ${panel === "orders" || panel === "admin" ? "wide" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="account-title"
+      >
+        <button
+          class="close"
+          aria-label="关闭账户窗口"
+          disabled={busy.value}
+          onClick={() => (accountPanel.value = null)}
+        >
+          <X size={20} />
+        </button>
+        <span class="eyebrow">
+          BEAD STUDIO / {panel === "admin" ? "MERCHANT" : "YOUR LITTLE CORNER"}
+        </span>
+        <h2 id="account-title">{title}</h2>
+        {(panel === "login" || panel === "register") && (
+          <form class="form" onSubmit={auth}>
+            {panel === "register" && (
+              <label>
+                称呼
+                <input
+                  required
+                  name="name"
+                  maxLength={30}
+                  autoComplete="nickname"
+                  placeholder="怎么称呼你"
+                />
+              </label>
+            )}
+            <label>
+              登录邮箱
+              <input
+                required
+                name="email"
+                type="email"
+                autoComplete="email"
+                maxLength={254}
+                placeholder="you@example.com"
+              />
+            </label>
+            <label>
+              密码
+              <input
+                required
+                name="password"
+                type="password"
+                minLength={10}
+                maxLength={128}
+                autoComplete={
+                  panel === "login" ? "current-password" : "new-password"
+                }
+                placeholder="至少 10 个字符"
+              />
+            </label>
+            <p class="form-hint">
+              邮箱作为登录标识。当前不支持邮件验证和自助找回密码，请妥善保管密码。
+            </p>
+            <button class="primary" disabled={busy.value}>
+              {busy.value
+                ? "正在处理…"
+                : panel === "login"
+                  ? "登录"
+                  : "创建账号"}
+              <ArrowRight size={16} />
+            </button>
+            <button
+              type="button"
+              class="text-button"
+              onClick={() =>
+                (accountPanel.value = panel === "login" ? "register" : "login")
+              }
+            >
+              {panel === "login" ? "还没有账号？注册一个" : "已有账号？去登录"}
+            </button>
+          </form>
+        )}
+        {panel === "account" && user.value && (
+          <>
+            <div class="profile-card">
+              <UserRound size={26} />
+              <div>
+                <strong>{user.value.name}</strong>
+                <p>{user.value.email}</p>
+              </div>
+              <span>{user.value.role === "admin" ? "商家" : "手作玩家"}</span>
+            </div>
+            <div class="account-menu">
+              <button onClick={() => (accountPanel.value = "orders")}>
+                <Package size={18} /> 我的订单 <ArrowRight size={15} />
+              </button>
+              <button onClick={() => (accountPanel.value = "checkout")}>
+                <ShoppingBag size={18} /> 定制当前设计 <ArrowRight size={15} />
+              </button>
+              {user.value.role === "admin" && (
+                <button onClick={() => (accountPanel.value = "admin")}>
+                  <Package size={18} /> 商家订单管理 <ArrowRight size={15} />
+                </button>
+              )}
+              <button
+                onClick={() => (passwordMode.value = !passwordMode.value)}
+              >
+                <LockKeyhole size={18} /> 修改密码
+              </button>
+              <button
+                onClick={() =>
+                  action(async () => {
+                    await api("/api/auth/logout", {
+                      method: "POST",
+                      body: "{}",
+                    });
+                    user.value = null;
+                    accountPanel.value = null;
+                    notify("已退出登录");
+                  })
+                }
+              >
+                <LogOut size={18} /> 退出登录
+              </button>
+            </div>
+            {passwordMode.value && (
+              <form
+                class="form compact"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const f = new FormData(e.currentTarget);
+                  void action(async () => {
+                    await api("/api/auth/password", {
+                      method: "POST",
+                      body: JSON.stringify(Object.fromEntries(f)),
+                    });
+                    passwordMode.value = false;
+                    notify("密码已更新，其他登录会话已退出");
+                  });
+                }}
+              >
+                <label>
+                  当前密码
+                  <input
+                    name="currentPassword"
+                    type="password"
+                    required
+                    minLength={10}
+                    autoComplete="current-password"
+                  />
+                </label>
+                <label>
+                  新密码
+                  <input
+                    name="password"
+                    type="password"
+                    required
+                    minLength={10}
+                    maxLength={128}
+                    autoComplete="new-password"
+                  />
+                </label>
+                <button class="primary" disabled={busy.value}>
+                  更新密码
+                </button>
+              </form>
+            )}
+            <h3 class="cloud-title">
+              云端设计 <small>{designs.value.length} 份</small>
+            </h3>
+            <p class="form-hint">
+              云端链接可供持有链接的人查看并复制编辑，不包含你的账户和订单信息。
+            </p>
+            <div class="cloud-designs">
+              {designs.value.length ? (
+                designs.value.map((d) => (
+                  <div>
+                    <span>
+                      <b>{d.name}</b>
+                      <small>
+                        {d.ids.length} 颗 ·{" "}
+                        {new Date(d.createdAt).toLocaleDateString("zh-CN")}
+                      </small>
+                    </span>
+                    <button
+                      onClick={() => {
+                        s.load(d);
+                        accountPanel.value = null;
+                        notify("已载入云端设计");
+                      }}
+                    >
+                      编辑
+                    </button>
+                    <a
+                      href={`/design/${d.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      分享页
+                    </a>
+                    <button
+                      onClick={() =>
+                        action(async () => {
+                          await api(`/api/designs/${d.id}`, {
+                            method: "DELETE",
+                            body: "{}",
+                          });
+                          await refresh();
+                        })
+                      }
+                    >
+                      删除
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <p>还没有云端设计，回到工作台保存一份吧。</p>
+              )}
+            </div>
+          </>
+        )}
+        {panel === "checkout" && (
+          <form class="form" onSubmit={checkout}>
+            <div class="checkout-design">
+              <span>你的专属设计</span>
+              <strong>{s.name.value || "未命名设计"}</strong>
+              <small>
+                {s.ids.value.length} 颗珠子 / 目标手围 {s.wrist.value} cm
+              </small>
+            </div>
+            <label>
+              定制数量
+              <input
+                type="number"
+                min="1"
+                max="20"
+                value={quantity.value}
+                required
+                onInput={(e) =>
+                  (quantity.value = Number(e.currentTarget.value))
+                }
+              />
+            </label>
+            {estimate.value && (
+              <div class="price-breakdown">
+                <p>
+                  珠材参考价 <b>{cash(estimate.value.materials)}</b>
+                </p>
+                <p>
+                  手作工费 <b>{cash(estimate.value.labor)}</b>
+                </p>
+                <p>
+                  运费 <b>{cash(estimate.value.shipping)}</b>
+                </p>
+                <p class="grand-total">
+                  参考合计 <b>{cash(estimate.value.total)}</b>
+                </p>
+              </div>
+            )}
+            <p class="guide-note">
+              提交后由商家确认材料、报价与交期，再提供付款信息。当前价格为参考价；尚未付款、不会自动扣款。
+            </p>
+            <div class="form-row">
+              <label>
+                收件人
+                <input
+                  name="recipient"
+                  required
+                  maxLength={40}
+                  autoComplete="name"
+                  placeholder="收件人姓名"
+                />
+              </label>
+              <label>
+                联系电话
+                <input
+                  name="phone"
+                  required
+                  type="tel"
+                  minLength={6}
+                  maxLength={25}
+                  pattern="[+0-9 ()-]{6,25}"
+                  autoComplete="tel"
+                  placeholder="便于配送联系"
+                />
+              </label>
+            </div>
+            <label>
+              完整收货地址
+              <textarea
+                name="address"
+                required
+                minLength={8}
+                maxLength={300}
+                autoComplete="street-address"
+                placeholder="省市区、街道与门牌号"
+              />
+            </label>
+            <label>
+              定制备注 <small>可选</small>
+              <textarea
+                name="note"
+                maxLength={500}
+                placeholder="例如松紧喜好、包装需求"
+              />
+            </label>
+            <label class="consent">
+              <input type="checkbox" required />
+              我确认设计和联系方式，并同意将收货信息提供给商家用于处理本次订单。
+            </label>
+            <button
+              class="primary"
+              disabled={
+                busy.value || !shop.value?.ordersEnabled || !s.ids.value.length
+              }
+            >
+              {busy.value
+                ? "正在提交…"
+                : shop.value?.ordersEnabled
+                  ? "提交定制订单"
+                  : "商家尚未开放接单"}
+              <ArrowRight size={16} />
+            </button>
+          </form>
+        )}
+        {(panel === "orders" || panel === "admin") && (
+          <>
+            <div class="orders-heading">
+              <p>
+                {panel === "admin"
+                  ? "请核实实际收款后再确认付款，填写物流信息后发货。"
+                  : "从一份灵感，到一件属于你的作品。"}
+              </p>
+              <button
+                class="text-button"
+                disabled={busy.value}
+                onClick={() => action(refresh)}
+              >
+                刷新订单
+              </button>
+            </div>
+            {orders.value.length ? (
+              orders.value.map((o) => (
+                <article class="order-card">
+                  <div class="order-title">
+                    <strong>{o.design.name}</strong>
+                    <span class={`status-badge ${o.status}`}>
+                      {labels[o.status] || o.status}
+                    </span>
+                  </div>
+                  <p class="order-id">
+                    订单 {o.id} ·{" "}
+                    {new Date(o.created_at).toLocaleString("zh-CN")}
+                  </p>
+                  <div class="order-info">
+                    <span>
+                      {o.quantity} 条 · {o.design.ids.length} 颗 / 条 · 手围{" "}
+                      {o.design.wrist} cm
+                    </span>
+                    <b>{cash(o.total)}</b>
+                  </div>
+                  <p>
+                    珠材 {cash(o.materials)} · 工费 {cash(o.labor)} · 运费{" "}
+                    {cash(o.shipping)}
+                  </p>
+                  <details>
+                    <summary>设计与配送详情</summary>
+                    <p>{o.design.ids.join(" · ")}</p>
+                    <p>
+                      收件人：{o.recipient} · {o.phone}
+                    </p>
+                    <p>地址：{o.address}</p>
+                    {o.note && <p>定制备注：{o.note}</p>}
+                    {o.payment_note && <p>付款说明：{o.payment_note}</p>}
+                    {o.tracking && <p>物流：{o.tracking}</p>}
+                  </details>
+                  {["awaiting_payment", "payment_review"].includes(
+                    o.status,
+                  ) && (
+                    <p class="payment-instructions">
+                      {shop.value?.paymentInstructions}
+                    </p>
+                  )}
+                  <div class="order-actions">
+                    {panel === "admin" ? (
+                      <>
+                        {(
+                          {
+                            pending: ["awaiting_payment", "cancelled"],
+                            awaiting_payment: ["paid", "cancelled"],
+                            payment_review: [
+                              "paid",
+                              "awaiting_payment",
+                              "cancelled",
+                            ],
+                            paid: ["making"],
+                            making: ["shipped"],
+                            shipped: ["completed"],
+                          } as Record<string, string[]>
+                        )[o.status]?.map((next) => (
+                          <button
+                            disabled={busy.value}
+                            onClick={() => {
+                              if (next === "shipped") {
+                                paymentTarget.value = o.id;
+                                tracking.value = "";
+                              } else
+                                void updateOrder(o.id, { status: next }, true);
+                            }}
+                          >
+                            {
+                              (
+                                {
+                                  awaiting_payment: "确认订单，通知付款",
+                                  paid: "确认实际收款",
+                                  making: "开始制作",
+                                  shipped: "填写物流并发货",
+                                  completed: "完成订单",
+                                  cancelled: "取消订单",
+                                } as Record<string, string>
+                              )[next]
+                            }
+                          </button>
+                        ))}
+                      </>
+                    ) : (
+                      <>
+                        {[
+                          "pending",
+                          "awaiting_payment",
+                          "payment_review",
+                        ].includes(o.status) && (
+                          <button
+                            disabled={busy.value}
+                            onClick={() =>
+                              updateOrder(o.id, { action: "cancel" })
+                            }
+                          >
+                            取消订单
+                          </button>
+                        )}
+                        {o.status === "awaiting_payment" && (
+                          <button
+                            disabled={busy.value}
+                            onClick={() => {
+                              paymentTarget.value = o.id;
+                              paymentNote.value = "";
+                            }}
+                          >
+                            提交付款说明
+                          </button>
+                        )}
+                        {o.status === "shipped" && (
+                          <button
+                            disabled={busy.value}
+                            onClick={() =>
+                              updateOrder(o.id, { action: "received" })
+                            }
+                          >
+                            确认收货
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            s.load(o.design);
+                            accountPanel.value = null;
+                          }}
+                        >
+                          载入此设计
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {paymentTarget.value === o.id && (
+                    <form
+                      class="form compact"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void updateOrder(
+                          o.id,
+                          panel === "admin"
+                            ? { status: "shipped", tracking: tracking.value }
+                            : {
+                                action: "payment",
+                                paymentNote: paymentNote.value,
+                              },
+                          panel === "admin",
+                        );
+                      }}
+                    >
+                      <label>
+                        {panel === "admin"
+                          ? "物流公司与运单号"
+                          : "实际付款时间、金额及核对说明"}
+                        <input
+                          required
+                          minLength={3}
+                          maxLength={panel === "admin" ? 120 : 300}
+                          value={
+                            panel === "admin"
+                              ? tracking.value
+                              : paymentNote.value
+                          }
+                          onInput={(e) =>
+                            panel === "admin"
+                              ? (tracking.value = e.currentTarget.value)
+                              : (paymentNote.value = e.currentTarget.value)
+                          }
+                        />
+                      </label>
+                      <button class="primary" disabled={busy.value}>
+                        {panel === "admin" ? "确认发货" : "提交商家核款"}
+                      </button>
+                    </form>
+                  )}
+                </article>
+              ))
+            ) : (
+              <div class="empty small-empty">
+                <Package size={30} />
+                <h3>还没有订单</h3>
+                <button
+                  class="primary"
+                  onClick={() =>
+                    (accountPanel.value =
+                      panel === "admin" ? "account" : "checkout")
+                  }
+                >
+                  {panel === "admin" ? "返回账户" : "定制当前设计"}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+        {error.value && (
+          <p class="form-error" role="alert">
+            {error.value}
+          </p>
+        )}
+      </section>
+    </div>
+  );
 }

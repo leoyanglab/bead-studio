@@ -11,7 +11,9 @@
     "start": "node scripts/node-server.mjs",
     "db:local": "wrangler d1 migrations apply bead-studio --local",
     "db:remote": "wrangler d1 migrations apply bead-studio --remote",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "format": "prettier --write src tests scripts vite.config.ts tsconfig.json package.json wrangler.jsonc README.md docs/architecture.md",
+    "format:check": "prettier --check src tests scripts vite.config.ts tsconfig.json package.json wrangler.jsonc README.md docs/architecture.md"
   },
   "dependencies": {
     "@preact/signals": "^2.3.0",
@@ -23,6 +25,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261031.1",
     "@preact/preset-vite": "^2.10.2",
+    "prettier": "^3.9.10",
     "typescript": "~5.9.3",
     "vite": "^7.1.0",
     "wrangler": "^4.45.0"
