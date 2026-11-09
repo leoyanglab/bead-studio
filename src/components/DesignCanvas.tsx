@@ -13,7 +13,8 @@ import { library, presets, useStore } from "../model";
 import { Gem } from "./Gem";
 import { Bracelet } from "./Bracelet";
 
-import type { Signal } from "@preact/signals";
+import { useSignal, type Signal } from "@preact/signals";
+import { Bracelet3D } from "./Bracelet3D";
 
 export function DesignCanvas({
   background,
@@ -22,6 +23,7 @@ export function DesignCanvas({
   background: Signal<string>;
   dragged: Signal<number | null>;
 }) {
+  const mode = useSignal<"flat" | "3d">("flat");
   const store = useStore();
   const { name, ids, selected, beads, notify, remove, move, load } = store;
 
@@ -44,23 +46,61 @@ export function DesignCanvas({
           <Check size={13} /> 自动保存在本机
         </span>
       </div>
-      <div class={`canvas ${background.value}`}>
+      <div class="preview-toolbar">
+        <div class="preview-modes" role="group" aria-label="预览模式">
+          <button
+            class={mode.value === "flat" ? "active" : ""}
+            aria-pressed={mode.value === "flat"}
+            onClick={() => (mode.value = "flat")}
+          >
+            平面搭配
+          </button>
+          <button
+            class={mode.value === "3d" ? "active" : ""}
+            aria-pressed={mode.value === "3d"}
+            onClick={() => (mode.value = "3d")}
+          >
+            3D 预览<span class="preview-new">NEW</span>
+          </button>
+        </div>
+        <span class="preview-material-note">
+          {mode.value === "3d"
+            ? "材质与颜色仅作搭配示意"
+            : "挑选喜欢的珠子，慢慢搭配"}
+        </span>
+      </div>
+      <div
+        class={`canvas ${background.value} ${mode.value === "3d" ? "is-3d" : ""}`}
+      >
         <span class="canvas-label">一点灵感 · 无限搭配</span>
-        <Bracelet />
+        <div
+          class="preview-flat"
+          hidden={mode.value === "3d" && !!ids.value.length}
+        >
+          <Bracelet />
+        </div>
+        {mode.value === "3d" && !!ids.value.length && (
+          <Bracelet3D
+            items={beads.value}
+            selected={selected.value}
+            onSelect={(index) => (selected.value = index)}
+            onFlatView={() => (mode.value = "flat")}
+          />
+        )}
         {!ids.value.length ? (
           <div class="canvas-center">
             <Plus size={22} />
             <strong>从一颗珠子开始</strong>
             <span>点击左侧素材，开启你的创作</span>
           </div>
-        ) : (
+        ) : mode.value === "flat" ? (
           <div class="canvas-center">
             <span class="center-mark">◌</span>
             <span>独一无二的</span>
             <strong>刚好是你</strong>
             <small>DESIGNED WITH LOVE</small>
           </div>
-        )}
+        ) : null}
         <div class="canvas-bottom">
           <div class="backgrounds">
             {[
@@ -76,7 +116,7 @@ export function DesignCanvas({
               />
             ))}
           </div>
-          <span>平面搭配预览</span>
+          <span>{mode.value === "3d" ? "立体搭配预览" : "平面搭配预览"}</span>
           <button
             class="reset"
             title="恢复初始搭配"

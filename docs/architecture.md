@@ -12,7 +12,11 @@
 - `src/components/DesignCanvas.tsx`：画布、背景、珠子排列与编辑。
 - `src/components/DesignDetails.tsx`：尺寸、材料清单与操作入口。
 - `src/components/SavedDesigns.tsx`、`Inspiration.tsx`：本地设计列表与预设。
-- `src/components/Bracelet.tsx`、`Gem.tsx`：共用的珠子与手串渲染。
+- `src/components/Bracelet.tsx`、`Gem.tsx`：共用的平面珠子与手串渲染。
+- `src/components/Bracelet3D.tsx`：按需加载、视角按钮、渲染实例生命周期与降级提示。
+- `src/preview3d/layout.ts`：按珠径计算相邻无重叠的闭合排列。
+- `src/preview3d/materials.ts`：基于目录颜色生成材质和本地纹理。
+- `src/preview3d/scene.ts`：Three.js 场景、视角、点选、按需绘制和资源清理。
 - `src/lib/`：金额显示、PNG 导出。
 - `src/model.ts`：Signals 状态、设计编辑、持久化、分享与 Context。
 - `src/catalog.ts`：素材、预设、设计校验、权威材料价格。
