@@ -9,8 +9,10 @@ import {
   ShoppingBag,
   LockKeyhole,
 } from "lucide-preact";
-import { api, useStore } from "./model";
+import { api, library, useStore } from "./model";
 const cash = (n: number) => `¥${(n / 100).toFixed(2)}`;
+const beadNames = (ids: string[]) =>
+  ids.map((id) => library.find((b) => b.id === id)?.name || id).join(" · ");
 const labels: Record<string, string> = {
   pending: "待商家确认",
   awaiting_payment: "待付款",
@@ -63,7 +65,17 @@ export function AccountFlow() {
   }, [panel]);
   useEffect(() => {
     if (panel !== "checkout") return;
+    if (
+      !s.ids.value.length ||
+      !Number.isInteger(quantity.value) ||
+      quantity.value < 1 ||
+      quantity.value > 20
+    ) {
+      estimate.value = null;
+      return;
+    }
     let active = true;
+    error.value = "";
     api("/api/quote", {
       method: "POST",
       body: JSON.stringify({ design: s.current(), quantity: quantity.value }),
@@ -342,6 +354,20 @@ export function AccountFlow() {
                     >
                       编辑
                     </button>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(
+                            `${location.origin}/design/${d.id}`,
+                          );
+                          notify("云端分享链接已复制");
+                        } catch {
+                          notify("复制失败，请打开分享页后复制地址");
+                        }
+                      }}
+                    >
+                      复制链接
+                    </button>
                     <a
                       href={`/design/${d.id}`}
                       target="_blank"
@@ -357,6 +383,7 @@ export function AccountFlow() {
                             body: "{}",
                           });
                           await refresh();
+                          notify("已删除云端设计");
                         })
                       }
                     >
@@ -516,7 +543,7 @@ export function AccountFlow() {
                   </p>
                   <details>
                     <summary>设计与配送详情</summary>
-                    <p>{o.design.ids.join(" · ")}</p>
+                    <p>珠串搭配：{beadNames(o.design.ids)}</p>
                     <p>
                       收件人：{o.recipient} · {o.phone}
                     </p>

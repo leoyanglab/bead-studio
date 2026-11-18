@@ -561,6 +561,21 @@ h1 em {
   color: #9ba18f;
   margin-left: 5px;
 }
+.sequence-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sequence-clear {
+  font-size: 9px;
+  color: #7d8974;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid #dfe4d8;
+}
+.sequence-clear:hover {
+  background: #f2f5ed;
+}
 .sequence-beads {
   display: flex;
   gap: 4px;
@@ -617,7 +632,8 @@ h1 em {
   padding: 3px;
 }
 .edit-bar select {
-  width: 100px;
+  width: auto;
+  max-width: 170px;
   border: 1px solid #dfe4d8;
   border-radius: 4px;
   background: #fafbf8;

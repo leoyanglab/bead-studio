@@ -127,7 +127,7 @@ export function DesignCanvas({
                 ids: presets[0].ids,
                 wrist: 16,
               });
-              notify("已恢复苔间晨露搭配");
+              notify(`已恢复${presets[0].name}搭配`);
             }}
           >
             <RotateCcw size={15} />
@@ -140,7 +140,22 @@ export function DesignCanvas({
             <GripVertical size={15} /> 珠子排列{" "}
             <small>{ids.value.length} 颗</small>
           </span>
-          <small>拖动排序 · 点击编辑</small>
+          <div class="sequence-meta">
+            <small>拖动排序 · 点击编辑</small>
+            {!!ids.value.length && (
+              <button
+                type="button"
+                class="sequence-clear"
+                onClick={() => {
+                  ids.value = [];
+                  selected.value = null;
+                  notify("已清空珠子，可点击左侧重新挑选");
+                }}
+              >
+                清空
+              </button>
+            )}
+          </div>
         </div>
         <div class="sequence-beads">
           {beads.value.map((b, i) => (
@@ -198,6 +213,21 @@ export function DesignCanvas({
             >
               <ChevronRight size={17} />
             </button>
+            <button
+              aria-label="再加一颗同类珠子"
+              title="再加一颗"
+              onClick={() => {
+                if (ids.value.length >= 80)
+                  return notify("最多可以添加 80 颗珠子");
+                const at = selected.value!;
+                const next = [...ids.value];
+                next.splice(at + 1, 0, ids.value[at]);
+                ids.value = next;
+                selected.value = at + 1;
+              }}
+            >
+              <Plus size={16} />
+            </button>
             <select
               aria-label="替换所选珠子"
               value={ids.value[selected.value]}
@@ -208,7 +238,9 @@ export function DesignCanvas({
               }}
             >
               {library.map((b) => (
-                <option value={b.id}>{b.name}</option>
+                <option value={b.id}>
+                  {b.name}（{b.size}mm · ¥{b.price}）
+                </option>
               ))}
             </select>
             <button aria-label="删除所选珠子" onClick={remove}>

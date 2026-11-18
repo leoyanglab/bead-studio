@@ -2,6 +2,10 @@ import type { Store } from "../model";
 import { money } from "./format";
 
 export async function exportImage({ name, ids, total, inner, notify }: Store) {
+  if (!ids.value.length) {
+    notify("请先添加珠子再导出设计图");
+    return;
+  }
   try {
     const svg = document.querySelector(".canvas .bracelet")!;
     const copy = svg.cloneNode(true) as SVGElement;
